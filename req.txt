@@ -1,0 +1,5 @@
+"gradio>=5.31.0"
+"humanize>=4.12.3"
+"polars[excel]>=1.30.0"
+"pydantic>=2.11.5"
+"python-docx>=1.1.2"
