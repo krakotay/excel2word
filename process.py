@@ -4,12 +4,17 @@ import polars as pl
 from docx import Document
 from docx.document import Document as DocumentObject
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.shared import Pt
 from docx.oxml.ns import qn
 from pydantic import BaseModel
 from time import time
 import polars.selectors as sc
 from humanize import intcomma
+from docx.shared import Pt, RGBColor
+from docx.table import _Cell
+import openpyxl
+from copy import copy
+from openpyxl.worksheet.worksheet import Worksheet
+from openpyxl.utils import column_index_from_string
 
 OUTPUT_DIR = Path("output")
 
@@ -22,13 +27,14 @@ class Processor:
     word: OfficeConfig
     excel: OfficeConfig
     def __init__(self) -> None:
+        OUTPUT_DIR.mkdir(exist_ok=True)
+
         with open("config.toml", "rb") as f:
             cfg = tomllib.load(f)
         self.word = OfficeConfig.model_validate(cfg["word"])
         self.excel = OfficeConfig.model_validate(cfg["excel"])
         pass
     def make_word(self, word_filename, excel_filename) -> str:
-        OUTPUT_DIR.mkdir(exist_ok=True)
         timestamp = str(int(time()))
         tmp_dir = OUTPUT_DIR / timestamp
         tmp_dir.mkdir()
@@ -66,6 +72,83 @@ class Processor:
         tmp = tmp.relative_to('.')
         print('tmp = ',tmp, str(tmp))
         return str(tmp)
+    def excel2word_insert(self, word_filename: str, excel_filename: str):
+        timestamp = str(int(time()))
+        tmp_dir = OUTPUT_DIR / timestamp
+        tmp_dir.mkdir()
+
+        word_filename = Path(str(word_filename))
+        excel_filename = Path(str(excel_filename))
+        doc = Document(word_filename)
+        wb = openpyxl.load_workbook(excel_filename, data_only=True, read_only=True)
+        ws = wb['Приложение_ОСВ']
+
+        # 2. Собираем номера строк, где хотя бы одна ячейка залита жёлтым (#FFFF00 или ColorIndex 6)
+        yellow_rows = {"лист": [], "Лицевой счет": [], "Наименование счета": []}
+        for row in ws.iter_rows(min_row=2):  # header_row=1 → данные с физической строки 2
+            for i, cell in enumerate(row):
+                fg = cell.fill.fgColor
+                # openpyxl хранит цвет в разных форматах, но в большинстве случаев .rgb == 'FFFFFF00' или 'FF0000FF'
+                rgb = getattr(fg, 'rgb', None)
+                # некоторые файлы могут использовать indexed цвет
+                if rgb and rgb.upper().endswith('FFFF00'):
+                    yellow_rows["лист"].append(str(row[i - 1].value))
+                    yellow_rows["Лицевой счет"].append(str(row[i].value))
+                    yellow_rows["Наименование счета"].append(str(row[i + 1].value))
+                    break  # эту строку уже отметили, идём дальше
+        # print('yellow_rows = ', yellow_rows)
+        df = pl.DataFrame(yellow_rows)
+        # print(df)
+
+        all_cells = (
+            cell
+            for tbl in doc.tables
+            for row in tbl.rows
+            for cell in row.cells
+        )
+
+        for cell in all_cells:
+            marker = search_red_marker(cell)
+            if marker:
+                temp_df = df.filter(pl.nth(0) == marker).drop(pl.nth(0))
+                print(marker, temp_df)
+                doc = insert_table(doc, temp_df, marker)
+        tmp = tmp_dir / f'выход_{word_filename.name}'      
+        doc.save(tmp)
+        tmp = tmp.relative_to('.')
+        return str(tmp)
+
+    def copy_ws(self, origin_filename, target_filename):
+        from openpyxl import load_workbook
+        origin_filename = Path(str(origin_filename))
+        target_filename = Path(str(target_filename))
+        timestamp = str(int(time()))
+        tmp_dir = OUTPUT_DIR / timestamp
+        tmp_dir.mkdir()
+        origin_wb = load_workbook(origin_filename)
+        target_wb = load_workbook(target_filename)
+
+        for sheet_name in reversed(origin_wb.sheetnames):
+            # Удаляем существующий лист, если он есть
+            if sheet_name in target_wb.sheetnames:
+                target_wb.remove(target_wb[sheet_name])
+            # Создаём новый лист в позиции 0 (в начале)
+            dst = target_wb.create_sheet(title=sheet_name, index=0)
+            src = origin_wb[sheet_name]
+            copy_sheet(src, dst)
+
+        # Optionally remove the default 'Sheet' if it's empty and not in origin
+        if 'Sheet' in target_wb.sheetnames and 'Sheet' not in origin_wb.sheetnames:
+            target_wb.remove(target_wb['Sheet'])
+
+        # Save changes
+        timestamp = str(int(time()))
+        tmp = tmp_dir / timestamp
+        tmp.mkdir()
+        tmp = (tmp / f'target_{target_filename.name}')
+
+        target_wb.save(tmp)
+        return str(tmp.relative_to('.'))
 
 
 def insert_l6_table(doc: DocumentObject, df: pl.DataFrame):
@@ -232,3 +315,110 @@ def clear_cell_shading(cell):
         tcPr.remove(shd)
 
 
+
+def has_red_marker(cell: _Cell, marker: str):
+    for p in cell.paragraphs:
+        if marker in p.text:
+            colors = set([p.runs[c].font.color.rgb for c in range(len(p.runs))])
+            if len(colors) == 1 and colors.pop() == RGBColor(0xee, 0x00, 0x00):
+                return True
+    return None
+def search_red_marker(cell: _Cell):
+    for p in cell.paragraphs:
+        # print('p.text = ', p.text)
+        colors = set([p.runs[c].font.color.rgb for c in range(len(p.runs))])
+        if len(colors) == 1 and colors.pop() == RGBColor(0xee, 0x00, 0x00):
+            return p.text.strip()
+    return None
+
+def insert_table(doc: DocumentObject, df: pl.DataFrame, marker: str):
+    all_cells = (
+        cell
+        for tbl in doc.tables
+        for row in tbl.rows
+        for cell in row.cells
+    )
+
+    # находим первую ячейку с маркером L6
+    try:
+        cell = next(cell for cell in all_cells if marker in cell.text)
+    except StopIteration:
+        return None
+    
+    if has_red_marker(cell, marker):
+        # очистить маркер
+        cell.text = cell.text.replace(marker, "")
+        # вставить вложенную таблицу
+        nested = cell.add_table(rows=1, cols=df.width)
+        nested.style = "Table Grid"
+        nested.alignment = WD_TABLE_ALIGNMENT.LEFT
+        # nested.autofit = False
+
+        # шапка
+
+        hdr = nested.rows[0].cells
+        for i, col in enumerate(df.columns):
+            hdr[i].text = str(col).strip()
+        # данные
+        for data_row in df.iter_rows():
+            new_cells = nested.add_row().cells
+            for i, val in enumerate(data_row):
+                new_cells[i].text = intcomma(str(val).strip()).replace(",", " ").replace(".", ",") if i >= 2 else str(val).strip()
+        for hdr_cell in nested.rows[0].cells:
+            for p in hdr_cell.paragraphs:
+                pf = p.paragraph_format
+                pf.first_line_indent = Pt(0)
+                pf.left_indent = Pt(0)
+
+        # и то же для всех строк с данными
+        for data_row in nested.rows[1:]:
+            for cell in data_row.cells:
+                for p in cell.paragraphs:
+                    pf = p.paragraph_format
+                    pf.first_line_indent = Pt(0)
+                    pf.left_indent = Pt(0)
+
+        return doc
+    raise RuntimeError(f"Маркер {marker} не найден ни в одной ячейке таблиц.")
+
+
+def copy_sheet(src_ws: Worksheet, dst_ws: Worksheet):
+    # Копируем значения и стили
+    for row in src_ws.iter_rows():
+        for cell in row:
+            row_idx = cell.row
+            # для обычных ячеек берем col_idx, для merged — преобразуем letter -> index
+            if hasattr(cell, 'col_idx'):
+                col_idx = cell.col_idx
+            else:
+                col = cell.column  # Может быть буквой
+                col_idx = col if isinstance(col, int) else column_index_from_string(col)
+            new_cell = dst_ws.cell(row=row_idx, column=col_idx, value=cell.value)
+
+            if cell.has_style:
+                new_cell.font = copy(cell.font)
+                new_cell.border = copy(cell.border)
+                new_cell.fill = copy(cell.fill)
+                # Прямо присваиваем строковый код формата
+                new_cell.number_format = cell.number_format
+                new_cell.protection = copy(cell.protection)
+                new_cell.alignment = copy(cell.alignment)
+    # Воссоздаём merged ranges
+    for merged_range in src_ws.merged_cells.ranges:
+        dst_ws.merge_cells(str(merged_range))
+    # Копируем размеры строк
+    for idx, dim in src_ws.row_dimensions.items():
+        dst_ws.row_dimensions[idx].height = dim.height
+    # Копируем ширины столбцов
+    for idx, dim in src_ws.column_dimensions.items():
+        dst_ws.column_dimensions[idx].width = dim.width
+    # Копируем остальные свойства листа
+    dst_ws.sheet_format = src_ws.sheet_format
+    dst_ws.sheet_properties = src_ws.sheet_properties
+    dst_ws.page_margins = src_ws.page_margins
+    dst_ws.page_setup = src_ws.page_setup
+    dst_ws.print_options = src_ws.print_options
+
+    # --- Новый блок: копируем условное форматирование ---
+    # Простой (хлороформатный) способ — скопировать «правила» целиком:
+    dst_ws.conditional_formatting._cf_rules = copy(src_ws.conditional_formatting._cf_rules)

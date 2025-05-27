@@ -3,20 +3,50 @@ from process import Processor
 
 
 with gr.Blocks() as app:
-    gr.Textbox(label="Обработка Excel файла в Word")
-    excel_input = gr.File(label="Загрузите Excel файл (.xlsx)", file_types=[".xlsx"])
-    word_input = gr.File(label="Загрузите Word файл (.docx)", file_types=[".docx"])
-    process_button = gr.Button("Запустить процесс")
-    download_output = gr.File(label="Скачать обработанный файл")
+    with gr.Tabs():
+        with gr.TabItem("Обработка Excel файла в Word"):
+            excel_input = gr.File(label="Загрузите Excel файл (.xlsx)", file_types=[".xlsx"])
+            word_input = gr.File(label="Загрузите Word файл (.docx)", file_types=[".docx"])
+            process_button = gr.Button("Запустить процесс")
+            download_output = gr.File(label="Скачать обработанный файл")
 
-    process_button.click(
-        Processor().make_word,
-        inputs=[
-            word_input,
-            excel_input
-        ],
-        outputs=[download_output],
-    )
+            process_button.click(
+                Processor().make_word,
+                inputs=[
+                    word_input,
+                    excel_input
+                ],
+                outputs=[download_output],
+            )
+        with gr.TabItem("Копирование листов"):
+            origin_input = gr.File(label="Откуда (.xlsx)", file_types=[".xlsx"])
+            target_input = gr.File(label="Куда (.docx)", file_types=[".xlsx"])
+            process_button = gr.Button("Запустить процесс")
+            download_output = gr.File(label="Скачать обработанный файл")
+
+            process_button.click(
+                Processor().copy_ws,
+                inputs=[
+                    origin_input,
+                    target_input
+                ],
+                outputs=[download_output],
+            )
+        with gr.TabItem("Вставка из Excel в Word"):
+            excel_input = gr.File(label="Загрузите Excel файл (.xlsx)", file_types=[".xlsx"])
+            word_input = gr.File(label="Загрузите Word файл (.docx)", file_types=[".docx"])
+            process_button = gr.Button("Запустить процесс")
+            download_output = gr.File(label="Скачать обработанный файл")
+
+            process_button.click(
+                Processor().excel2word_insert,
+                inputs=[
+                    word_input,
+                    excel_input
+                ],
+                outputs=[download_output],
+            )
+
 
 if __name__ == "__main__":
     app.launch(inbrowser=True)

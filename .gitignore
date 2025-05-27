@@ -6,9 +6,13 @@ dist/
 wheels/
 release/
 output/
+шаблоны/
 *.xlsx
 *.docx
 *.egg-info
 
 # Virtual environments
 .venv
+
+# Test files
+test.py
