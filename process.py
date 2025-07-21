@@ -104,13 +104,22 @@ class Processor:
                 rgb = getattr(fg, "rgb", None)
                 # некоторые файлы могут использовать indexed цвет
                 if rgb and rgb.upper().endswith("FFFF00"):
+                    v1 = str(row[i - 1].value)
+                    v2 = str(row[i].value)
+                    v3 = str(row[i + 1].value)
+                    print(f'Номер: {i}, Значения: {v1} | {v2} | {v3}')
                     yellow_rows["лист"].append(str(row[i - 1].value))
                     yellow_rows["Лицевой счет"].append(str(row[i].value))
                     yellow_rows["Наименование счета"].append(str(row[i + 1].value))
                     break  # эту строку уже отметили, идём дальше
         # print('yellow_rows = ', yellow_rows)
         df = pl.DataFrame(yellow_rows)
-        # print(df)
+        if df.is_empty():
+            print('Внимание! df пустой!')
+            return
+        else:
+            print('Получился вот такой DF со значениями')
+            print(df)
 
         # Перебираем таблицы и строки, чтобы иметь доступ к row
         for tbl in doc.tables:
@@ -365,7 +374,7 @@ def search_text_marker(cell: _Cell, start_par: str = START_PART):
 def insert_table(doc: DocumentObject, df: pl.DataFrame, marker: str):
     all_cells = (cell for tbl in doc.tables for row in tbl.rows for cell in row.cells)
 
-    # находим первую ячейку с маркером L6
+    # находим первую ячейку с маркером текста
     try:
         cell = next(cell for cell in all_cells if marker in cell.text)
     except StopIteration:
@@ -374,6 +383,7 @@ def insert_table(doc: DocumentObject, df: pl.DataFrame, marker: str):
     if has_text_marker(cell, START_PART + marker):
         # очистить маркер
         cell.text = cell.text.replace(START_PART + marker, "")
+        cell.text = cell.text.replace('\n\n\n', "")
         # вставить вложенную таблицу
         nested = cell.add_table(rows=1, cols=df.width)
         nested.style = "Table Grid"

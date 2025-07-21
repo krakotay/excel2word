@@ -4,7 +4,7 @@ from process import Processor
 
 with gr.Blocks() as app:
     with gr.Tabs():
-        with gr.TabItem("Обработка Excel файла в Word"):
+        with gr.TabItem("РД_Влияние СПОД"):
             excel_input = gr.File(label="Загрузите Excel файл (.xlsx)", file_types=[".xlsx"])
             word_input = gr.File(label="Загрузите Word файл (.docx)", file_types=[".docx"])
             process_button = gr.Button("Запустить процесс")
@@ -18,9 +18,9 @@ with gr.Blocks() as app:
                 ],
                 outputs=[download_output],
             )
-        with gr.TabItem("Копирование листов"):
+        with gr.TabItem("РД планирование"):
             origin_input = gr.File(label="Откуда (.xlsx)", file_types=[".xlsx"])
-            target_input = gr.File(label="Куда (.docx)", file_types=[".xlsx"])
+            target_input = gr.File(label="Куда (.xlsx)", file_types=[".xlsx"])
             process_button = gr.Button("Запустить процесс")
             download_output = gr.File(label="Скачать обработанный файл")
 
@@ -32,7 +32,7 @@ with gr.Blocks() as app:
                 ],
                 outputs=[download_output],
             )
-        with gr.TabItem("Вставка из Excel в Word"):
+        with gr.TabItem("Запрос 3"):
             gr.Markdown("""
             `_ВСТАВКА_` - маркер, который будет искаться в ячейках таблиц
             """)
@@ -49,7 +49,7 @@ with gr.Blocks() as app:
                 ],
                 outputs=[download_output],
             )
-        with gr.TabItem("Вставка из Excel в Word с фильтром от нулей"):
+        with gr.TabItem("Таблицы для отчета"):
             from task_four import insert_tables_with_filter
             gr.Markdown("""
             `_ВСТАВКА_` - маркер, на место которого вставят таблицу
